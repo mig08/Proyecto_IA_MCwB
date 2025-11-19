@@ -14,8 +14,8 @@ void initRNG(unsigned long long seed) {
 struct Node {
     int id;
     double x, y;
-    char quality;   // 'A','B','C' o '-' para planta
-    double amount;  // litros
+    char quality;   
+    double litros;  
     bool isPlant;
 };
 
@@ -25,17 +25,17 @@ struct Instance {
 
     int numQualities;
     vector<double> quotas;
-    vector<double> revenues; // por calidad (A,B,C)
+    vector<double> calidad_inst; 
 
     vector<Node> nodes;
-    int plantIndex; // índice en nodes
+    int plantIndex; 
 
-    vector<vector<double>> dist; // matriz de distancias
+    vector<vector<double>> dist; 
 };
 
 struct TruckRoute {
-    int truckIdx;
-    vector<int> nodes; // secuencia de índices de nodes (incluyendo planta al inicio y fin)
+    int camion_id; // id del camion
+    vector<int> nodes; // ruta
 };
 
 struct CustomerPos {
@@ -51,14 +51,12 @@ double routeLoad(const Instance &inst, const TruckRoute &route) {
         int idx = route.nodes[i];
         const Node &nd = inst.nodes[idx];
         if (nd.isPlant) continue;
-        load += nd.amount;
+        load += nd.litros;
     }
     return load;
 }
 
-bool generateNeighborSwap(const Instance &inst,
-                          const vector<TruckRoute> &current,
-                          vector<TruckRoute> &neighbor) {
+bool generateNeighborSwap(const Instance &inst, const vector<TruckRoute> &current, vector<TruckRoute> &neighbor) {
     neighbor = current;
 
     struct Pos { int r; int i; };
@@ -78,29 +76,29 @@ bool generateNeighborSwap(const Instance &inst,
     // Distribución uniforme entera sobre los índices de positions
     uniform_int_distribution<int> posDist(0, (int)positions.size() - 1);
 
-    int tries = 100;
-    while (tries--) {
-        // 2) Elegimos dos posiciones de clientes completamente al azar
+    int intentos = 100;
+    while (intentos--) {
+
         Pos p1 = positions[posDist(rng)];
         Pos p2 = positions[posDist(rng)];
 
-        if (p1.r == p2.r && p1.i == p2.i) continue; // misma posición, no sirve
+        if (p1.r == p2.r && p1.i == p2.i) continue; //no puede ser la misma posicion
 
         neighbor = current;
 
-        // 3) Hacemos el swap de los índices de nodo
+        //aca se hace el swap
         int &a = neighbor[p1.r].nodes[p1.i];
         int &b = neighbor[p2.r].nodes[p2.i];
         std::swap(a, b);
 
-        // 4) Revisamos capacidad de ambas rutas afectadas
+        //se revisa q las capacidades lo permitan
         auto checkCap = [&](int r) {
             double load = 0.0;
             for (int i = 1; i + 1 < (int)neighbor[r].nodes.size(); ++i) {
                 int idx = neighbor[r].nodes[i];
-                load += inst.nodes[idx].amount;
+                load += inst.nodes[idx].litros;
             }
-            return load <= inst.truckCap[neighbor[r].truckIdx] + 1e-9;
+            return load <= inst.truckCap[neighbor[r].camion_id] + 1e-9;
         };
 
         if (checkCap(p1.r) && checkCap(p2.r)) {
@@ -146,9 +144,9 @@ Instance readInstance(istream &in) {
         in >> inst.quotas[i];
     }
 
-    inst.revenues.resize(inst.numQualities);
+    inst.calidad_inst.resize(inst.numQualities);
     for (int i = 0; i < inst.numQualities; ++i) {
-        in >> inst.revenues[i];
+        in >> inst.calidad_inst[i];
     }
 
     int numNodes;
@@ -162,7 +160,7 @@ Instance readInstance(istream &in) {
     for (int k = 0; k < numNodes; ++k) {
         Node node;
         char typeChar;
-        in >> node.id >> node.x >> node.y >> typeChar >> node.amount;
+        in >> node.id >> node.x >> node.y >> typeChar >> node.litros;
         node.quality = typeChar;
         node.isPlant = (typeChar == '-');
 
@@ -193,7 +191,7 @@ Instance readInstance(istream &in) {
 
 // -------------------- Greedy inicial --------------------
 
-vector<TruckRoute> greedyInitialSolution(const Instance &inst) {
+vector<TruckRoute> greedyInitialsolucion(const Instance &inst) {
     int N = (int)inst.nodes.size();
     vector<bool> visited(N, false);
     // La planta no se marca como visitada porque se puede usar muchas veces
@@ -201,7 +199,7 @@ vector<TruckRoute> greedyInitialSolution(const Instance &inst) {
         if (inst.nodes[i].isPlant) visited[i] = true; // nunca "visitamos" la planta como granja
     }
 
-    vector<TruckRoute> solution;
+    vector<TruckRoute> solucion;
 
     int remainingFarms = 0;
     for (int i = 0; i < N; ++i) {
@@ -210,7 +208,7 @@ vector<TruckRoute> greedyInitialSolution(const Instance &inst) {
 
     for (int k = 0; k < inst.numTrucks && remainingFarms > 0; ++k) {
         TruckRoute route;
-        route.truckIdx = k;
+        route.camion_id = k;
 
         int current = inst.plantIndex;
         double remainingCap = inst.truckCap[k];
@@ -219,12 +217,12 @@ vector<TruckRoute> greedyInitialSolution(const Instance &inst) {
 
         while (true) {
             int best = -1;
-            double bestDist = 1e18;
+            double bestDist = 1e18; //numero muy grande inicial para reemplazar despues
 
             for (int j = 0; j < N; ++j) {
                 if (inst.nodes[j].isPlant) continue;
                 if (visited[j]) continue;
-                if (inst.nodes[j].amount > remainingCap) continue;
+                if (inst.nodes[j].litros > remainingCap) continue;
 
                 double d = inst.dist[current][j];
                 if (d < bestDist) {
@@ -238,7 +236,7 @@ vector<TruckRoute> greedyInitialSolution(const Instance &inst) {
             // Asignar la granja 'best' a esta ruta
             route.nodes.push_back(best);
             visited[best] = true;
-            remainingCap -= inst.nodes[best].amount;
+            remainingCap -= inst.nodes[best].litros;
             remainingFarms--;
             current = best;
         }
@@ -246,7 +244,7 @@ vector<TruckRoute> greedyInitialSolution(const Instance &inst) {
         // Volver a la planta
         route.nodes.push_back(inst.plantIndex);
         if (route.nodes.size() > 2) {
-            solution.push_back(route);
+            solucion.push_back(route);
         }
     }
 
@@ -254,22 +252,21 @@ vector<TruckRoute> greedyInitialSolution(const Instance &inst) {
         cerr << "ADVERTENCIA: no se pudieron asignar todas las granjas con los camiones disponibles.\n";
     }
 
-    return solution;
+    return solucion;
 }
 
 // -------------------- Evaluación de solución --------------------
 
 struct EvalResult {
-    double profit;                 // revenue - cost
+    double profit;                
     double cost;
     double revenue;
-    vector<double> totalMilkPerQuality; // litros finales por calidad (después de blending)
-    bool quotasSatisfied;          // true sii se cumplen todas las cuotas
+    vector<double> totalMilkPerQuality; 
+    bool quotasSatisfied;          
 };
 
 
-EvalResult evaluateSolution(const Instance &inst,
-                            const vector<TruckRoute> &sol) {
+EvalResult evaluatesolucion(const Instance &inst, const vector<TruckRoute> &sol) {
     EvalResult res;
     res.cost = 0.0;
     res.revenue = 0.0;
@@ -288,8 +285,8 @@ EvalResult evaluateSolution(const Instance &inst,
             res.cost += inst.dist[u][v];
         }
 
-        // Mezcla de calidades en este camión
-        int worstQuality = -1; // 0=A,1=B,2=C
+        
+        int worstQuality = -1; //recuerda q 0=A,1=B,2=C
         double volume = 0.0;
 
         for (size_t i = 0; i < route.nodes.size(); ++i) {
@@ -301,7 +298,7 @@ EvalResult evaluateSolution(const Instance &inst,
             if (q == -1) continue;
 
             if (q > worstQuality) worstQuality = q;
-            volume += nd.amount;
+            volume += nd.litros;
         }
 
         // Toda la leche de esta ruta se suma a la peor calidad encontrada
@@ -315,7 +312,7 @@ EvalResult evaluateSolution(const Instance &inst,
     // 2. Ingreso total
     // --------------------------------------
     for (int t = 0; t < inst.numQualities; ++t) {
-        res.revenue += res.totalMilkPerQuality[t] * inst.revenues[t];
+        res.revenue += res.totalMilkPerQuality[t] * inst.calidad_inst[t];
     }
 
     // --------------------------------------
@@ -340,10 +337,7 @@ EvalResult evaluateSolution(const Instance &inst,
 
 // -------------------- Impresión de solución --------------------
 
-void printSolution(const Instance &inst,
-                   const vector<TruckRoute> &sol,
-                   const EvalResult &ev, 
-                   unsigned long long seed) {
+void printsolucion(const Instance &inst, const vector<TruckRoute> &sol, const EvalResult &ev, unsigned long long seed) {
     cout << "Seed: " << seed << "\n";
 
     // Ganancia final | costo total | ganancia total
@@ -363,7 +357,7 @@ void printSolution(const Instance &inst,
             path += to_string(id);
         }
 
-        
+
         // Costo de la ruta
         double routeCost = 0.0;
         for (size_t i = 0; i + 1 < route.nodes.size(); ++i) {
@@ -382,7 +376,7 @@ void printSolution(const Instance &inst,
             int q = qualityIndex(nd.quality);
             if (q == -1) continue;
             if (q > worstQuality) worstQuality = q;
-            volume += nd.amount;
+            volume += nd.litros;
         }
 
         char qChar = (worstQuality == -1 ? '-' : qualityChar(worstQuality));
@@ -403,30 +397,29 @@ void printSolution(const Instance &inst,
     }
 }
 
-vector<TruckRoute> simulatedAnnealing(const Instance &inst,
-                                      const vector<TruckRoute> &initial,
-                                      EvalResult &bestEval) {
+vector<TruckRoute> simulatedAnnealing(const Instance &inst, const vector<TruckRoute> &initial, EvalResult &bestEval) {
+
     vector<TruckRoute> current = initial;
-    EvalResult currentEval = evaluateSolution(inst, current);
+    EvalResult currentEval = evaluatesolucion(inst, current);
 
     vector<TruckRoute> best = current;
     bestEval = currentEval;
 
-    double T = 1000.0;       // temperatura inicial
-    double alpha = 0.999;    // factor de enfriamiento
-    int maxIter = 50000;     // número de iteraciones
+    double T = 100.0;       // temperatura inicial
+    double alpha = 0.8;    
+    int maxIter = 500;     // número de iteraciones
 
     // Distribución uniforme real en [0,1)
     uniform_real_distribution<double> ur(0.0, 1.0);
 
-    for (int iter = 0; iter < maxIter && T > 1e-4; ++iter) {
+    for (int iter = 0; iter < maxIter && T > 0.00001; ++iter) {
         vector<TruckRoute> neighbor;
         if (!generateNeighborSwap(inst, current, neighbor)) {
             T *= alpha;
             continue;
         }
 
-        EvalResult neighborEval = evaluateSolution(inst, neighbor);
+        EvalResult neighborEval = evaluatesolucion(inst, neighbor);
 
         double delta = neighborEval.profit - currentEval.profit;
 
@@ -467,7 +460,7 @@ int main() {
 
     // Seed a partir del reloj
     unsigned long long seed =
-        chrono::high_resolution_clock::now().time_since_epoch().count();
+        chrono::high_resolution_clock::now().time_since_epoch().count(); 
     initRNG(seed);
 
     ifstream in("a48.txt");
@@ -478,11 +471,11 @@ int main() {
 
     Instance inst = readInstance(in);
 
-    vector<TruckRoute> initialSol = greedyInitialSolution(inst);
+    vector<TruckRoute> initialSol = greedyInitialsolucion(inst);
 
     EvalResult bestEval;
     vector<TruckRoute> bestSol = simulatedAnnealing(inst, initialSol, bestEval);
 
-    printSolution(inst, bestSol, bestEval, seed);
+    printsolucion(inst, bestSol, bestEval, seed);
 }
 
